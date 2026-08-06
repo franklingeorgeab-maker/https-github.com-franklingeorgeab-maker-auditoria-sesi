@@ -64,20 +64,10 @@
         }
 
         /* Modal Assinatura */
-        #modal-sig { display: none; position: fixed; inset: 0; background: white; z-index: 9999; flex-direction: column; }
+        #modal-sig { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 9999; flex-direction: column; }
         #modal-sig.active { display: flex; }
-        #rotate-instruction { display: none; position: fixed; inset: 0; background: #1e293b; color: white; z-index: 10000; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
         
-        @media (orientation: portrait) and (max-width: 900px) { 
-            #modal-sig.active #rotate-instruction { display: flex; } 
-            #modal-sig.active #sig-interface { display: none; } 
-        }
-        @media (orientation: landscape) or (min-width: 901px) { 
-            #modal-sig.active #rotate-instruction { display: none; } 
-            #modal-sig.active #sig-interface { display: flex; } 
-        }
-
-        #canvas-container { flex: 1; position: relative; background: #ffffff; margin: 10px; border-radius: 20px; border: 2px solid #cbd5e1; }
+        #canvas-container { flex: 1; position: relative; background: #ffffff; margin: 0; border-radius: 1rem; border: 2px dashed #cbd5e1; min-height: 250px; }
         #sig-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none; }
         
         table { border-collapse: collapse; width: 100%; margin-top: 4px; }
@@ -531,28 +521,37 @@
 </section>
 
 <!-- MODAL ASSINATURA -->
-<div id="modal-sig">
-    <div id="rotate-instruction">
-        <div class="animate-bounce mb-6 text-8xl">🔄</div>
-        <h2 class="text-4xl font-black uppercase italic mb-4">Gire o Dispositivo</h2>
-        <p class="opacity-70 font-bold uppercase text-lg text-blue-400">Assinatura obrigatória na horizontal</p>
-    </div>
-    <div id="sig-interface" class="flex-1 flex flex-row h-full bg-slate-50">
-        <div id="canvas-container" class="m-4 rounded-3xl border-2 border-slate-200 overflow-hidden shadow-inner bg-white relative">
-            <canvas id="sig-canvas"></canvas>
-            <!-- Badge overlay minimalista para mostrar a etapa (1/2 ou 2/2) -->
-            <div class="absolute top-4 left-4 bg-slate-900 text-white text-[11px] font-black px-3.5 py-1.5 rounded-full shadow-md tracking-wider">
-                <span id="sig-modal-step">1/2</span>
+<div id="modal-sig" class="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[9999] hidden flex-col p-2 sm:p-4">
+    <div class="bg-slate-50 w-full h-full rounded-2xl sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl border border-slate-200">
+        <!-- Header Modal -->
+        <div class="bg-slate-900 text-white px-4 py-3 flex items-center justify-between shrink-0">
+            <button type="button" onclick="cancelarAssinatura()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1 transition-all active:scale-95 border border-slate-700">
+                ⬅️ Cancelar
+            </button>
+            <div class="text-center px-2">
+                <h3 id="sig-modal-title" class="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-100">Assinatura do Trabalhador</h3>
+                <p class="text-[9px] text-slate-400 font-bold uppercase hidden sm:block">Assine com o dedo no campo abaixo</p>
+            </div>
+            <button type="button" onclick="state.pad && state.pad.clear()" class="bg-slate-800 hover:bg-slate-700 text-amber-400 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1 transition-all active:scale-95 border border-slate-700">
+                🧹 Limpar
+            </button>
+        </div>
+
+        <!-- Canvas Container -->
+        <div id="canvas-container" class="flex-1 m-2 sm:m-3 rounded-2xl border-2 border-slate-300 bg-white relative overflow-hidden shadow-inner">
+            <canvas id="sig-canvas" class="w-full h-full touch-action-none"></canvas>
+            <div class="absolute bottom-2 right-3 pointer-events-none text-[10px] font-black uppercase text-slate-300 tracking-widest select-none">
+                Espaço para Assinatura
             </div>
         </div>
-        <div class="w-24 bg-slate-100 border-l p-4 flex flex-col gap-4 justify-center items-center">
-            <!-- Botão Limpar (Apenas ícone) -->
-            <button onclick="state.pad.clear()" class="w-16 h-16 bg-white border border-slate-300 rounded-full font-black shadow-sm text-2xl active:scale-95 transition-all flex items-center justify-center" title="Limpar">
-                🧹
+
+        <!-- Footer / Action Bar -->
+        <div class="p-2 sm:p-3 bg-white border-t border-slate-200 flex items-center justify-between gap-2 shrink-0">
+            <button type="button" onclick="state.pad && state.pad.clear()" class="sm:hidden bg-slate-100 text-slate-700 px-4 py-3 rounded-xl text-xs font-black uppercase tracking-wider">
+                🧹 Limpar
             </button>
-            <!-- Botão Confirmar/OK (Apenas ícone) -->
-            <button id="sig-confirm-btn" onclick="confirmarAssinatura()" class="w-16 h-16 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full font-black shadow-xl text-3xl active:scale-95 transition-all flex items-center justify-center" title="Confirmar">
-                ✓
+            <button type="button" id="sig-confirm-btn" onclick="confirmarAssinatura()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 sm:py-4 rounded-xl sm:rounded-2xl font-black uppercase text-sm sm:text-lg shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2">
+                ✓ Confirmar Assinatura
             </button>
         </div>
     </div>
@@ -594,13 +593,40 @@
     // --- FOTO ---
     function handleFoto(input) {
         if (input.files && input.files[0]) {
+            const file = input.files[0];
             const reader = new FileReader();
             reader.onload = (e) => {
-                state.photo = e.target.result;
-                document.getElementById('foto-preview').src = e.target.result;
-                document.getElementById('foto-preview-container').classList.remove('hidden');
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+                    const maxDim = 800; // Resolução otimizada para foto de evidência
+                    
+                    if (width > maxDim || height > maxDim) {
+                        if (width > height) {
+                            height = Math.round((height * maxDim) / width);
+                            width = maxDim;
+                        } else {
+                            width = Math.round((width * maxDim) / height);
+                            height = maxDim;
+                        }
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // Comprime como JPEG leve (~40KB) para evitar estourar o localStorage
+                    const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                    state.photo = compressedDataUrl;
+                    document.getElementById('foto-preview').src = compressedDataUrl;
+                    document.getElementById('foto-preview-container').classList.remove('hidden');
+                };
+                img.src = e.target.result;
             };
-            reader.readAsDataURL(input.files[0]);
+            reader.readAsDataURL(file);
         }
     }
     function removerFoto() {
@@ -964,9 +990,50 @@
         
         // Remove old entries for the same employee to keep it clean
         audits = audits.filter(a => !(a.cracha === cracha || normalizeStr(a.nome) === normalizeStr(nome)));
-        
         audits.push(audit);
-        localStorage.setItem('videplast_audited_history', JSON.stringify(audits));
+        
+        function tentarSalvarNoStorage(listaAudits) {
+            try {
+                localStorage.setItem('videplast_audited_history', JSON.stringify(listaAudits));
+                return true;
+            } catch (quotaErr) {
+                console.warn('LocalStorage cheio. Liberando espaço em histórico antigo...', quotaErr);
+                // 1º Passo: Limpa fotos antigas do histórico
+                let alterado = false;
+                for (let i = 0; i < listaAudits.length - 1; i++) {
+                    if (listaAudits[i].photo) {
+                        listaAudits[i].photo = null;
+                        alterado = true;
+                    }
+                }
+                if (alterado) {
+                    try {
+                        localStorage.setItem('videplast_audited_history', JSON.stringify(listaAudits));
+                        return true;
+                    } catch (e2) {}
+                }
+                // 2º Passo: Se ainda estourar, remove a foto do item atual
+                const semFotos = listaAudits.map(a => ({ ...a, photo: null }));
+                try {
+                    localStorage.setItem('videplast_audited_history', JSON.stringify(semFotos));
+                    return true;
+                } catch (e3) {
+                    // 3º Passo: Se o histórico for gigante, retém os últimos 50 itens sem fotos
+                    if (listaAudits.length > 50) {
+                        const ultimos50 = semFotos.slice(-50);
+                        try {
+                            localStorage.setItem('videplast_audited_history', JSON.stringify(ultimos50));
+                            return true;
+                        } catch (e4) {
+                            console.error('Falha ao gravar no localStorage.', e4);
+                        }
+                    }
+                }
+                return false;
+            }
+        }
+
+        tentarSalvarNoStorage(audits);
     }
 
     function exportarHistoricoCSV() {
@@ -1673,13 +1740,22 @@
         const canvas = document.getElementById('sig-canvas');
         const container = document.getElementById('canvas-container');
         
-        // Verifica se o container está visível e tem dimensões
+        if (!canvas || !container) return;
         if (!container.offsetWidth || !container.offsetHeight) return;
+
+        // Salva estado da assinatura se o usuário já tiver começado a rabiscar
+        let existingData = null;
+        if (state.pad && !state.pad.isEmpty()) {
+            try {
+                existingData = state.pad.toDataURL();
+            } catch (e) {}
+        }
 
         const ratio = Math.max(window.devicePixelRatio || 1, 1);
         canvas.width = container.offsetWidth * ratio;
         canvas.height = container.offsetHeight * ratio;
-        canvas.getContext("2d").scale(ratio, ratio);
+        const ctx = canvas.getContext("2d");
+        ctx.scale(ratio, ratio);
         
         if (state.pad) state.pad.off();
         state.pad = new SignaturePad(canvas, { 
@@ -1689,12 +1765,21 @@
             maxWidth: 4.5
         });
         
-        // Garante que o pad esteja ativo
+        if (existingData) {
+            try {
+                state.pad.fromDataURL(existingData);
+            } catch (e) {}
+        }
+        
         state.pad.on();
     }
 
     function cancelarAssinatura() {
-        document.getElementById('modal-sig').classList.remove('active');
+        const modal = document.getElementById('modal-sig');
+        if (modal) {
+            modal.classList.remove('active');
+            modal.classList.add('hidden');
+        }
         state.sigStep = 'colab';
         state.sigColab = null;
         state.sigAuditor = null;
@@ -1704,7 +1789,7 @@
     }
 
     function abrirModalAssinatura() {
-        if(!state.ans['PARECER']) return alert('Selecione o PARECER!');
+        if (!state.ans['PARECER']) return alert('Por favor, selecione o PARECER (APROVADO ou TREINAMENTO) antes de assinar!');
         
         state.sigStep = 'colab';
         state.sigColab = null;
@@ -1712,47 +1797,63 @@
         
         atualizarLayoutModalAssinatura();
         
-        document.getElementById('modal-sig').classList.add('active');
+        const modal = document.getElementById('modal-sig');
+        if (modal) {
+            modal.classList.remove('hidden');
+            modal.classList.add('active');
+        }
         
-        // Pequeno delay para garantir que o DOM atualizou e as dimensões estão corretas
-        setTimeout(initCanvas, 300);
+        setTimeout(initCanvas, 150);
+        setTimeout(initCanvas, 400);
     }
 
     function atualizarLayoutModalAssinatura() {
-        const stepEl = document.getElementById('sig-modal-step');
-        const confirmBtn = document.getElementById('sig-confirm-btn');
-        
-        if (stepEl) stepEl.textContent = 'Assinatura do Trabalhador';
-        if (confirmBtn) {
-            confirmBtn.className = 'w-16 h-16 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full font-black shadow-xl text-3xl active:scale-95 transition-all flex items-center justify-center';
-        }
+        const titleEl = document.getElementById('sig-modal-title');
+        if (titleEl) titleEl.textContent = 'Assinatura do Trabalhador';
     }
 
-    // Re-inicializa o canvas se a tela for redimensionada (ex: rotação)
+    // Re-inicializa o canvas se a tela for redimensionada ou rotacionada
     window.addEventListener('resize', function() {
-        if (document.getElementById('modal-sig').classList.contains('active')) {
-            setTimeout(initCanvas, 300);
+        const modal = document.getElementById('modal-sig');
+        if (modal && (modal.classList.contains('active') || !modal.classList.contains('hidden'))) {
+            setTimeout(initCanvas, 200);
         }
     });
 
     function confirmarAssinatura() {
-        if (!state.pad || state.pad.isEmpty()) return alert('Assine para confirmar!');
+        if (!state.pad || state.pad.isEmpty()) return alert('Por favor, faça a assinatura do trabalhador para confirmar!');
         
-        state.sigColab = state.pad.toDataURL();
+        try {
+            state.sigColab = state.pad.toDataURL();
+        } catch (e) {
+            console.error('Erro ao obter imagem da assinatura:', e);
+        }
         
         // Carrega dados e assinatura pré-configurados do Auditor
         const savedSig = localStorage.getItem('videplast_auditor_sig') || '';
         state.sigAuditor = savedSig;
         
-        document.getElementById('modal-sig').classList.remove('active');
+        const modal = document.getElementById('modal-sig');
+        if (modal) {
+            modal.classList.remove('active');
+            modal.classList.add('hidden');
+        }
         
-        // Salva no histórico de auditorias (365 dias)
-        saveCompletedAudit();
+        // Salva no histórico de auditorias
+        try {
+            saveCompletedAudit();
+        } catch (err) {
+            console.error('Erro ao salvar auditoria no histórico:', err);
+        }
         
-        renderizarRelatorio();
-        ir('screen-3');
+        try {
+            renderizarRelatorio();
+            ir('screen-3');
+        } catch (err) {
+            console.error('Erro ao renderizar relatório:', err);
+            ir('screen-3');
+        }
 
-        // Se o auditor não preencheu a assinatura permanente dele, avisa de forma amigável
         if (!savedSig) {
             setTimeout(() => {
                 alert('Atenção: Os dados do Auditor (nome, registro, assinatura) não foram cadastrados na tela inicial. Você pode cadastrá-los na aba "Auditor" na tela de login para que saiam preenchidos automaticamente nos próximos relatórios!');
@@ -1784,7 +1885,8 @@
             respDiv.innerHTML += `<div class="flex justify-between border-b border-slate-50 py-0.5 text-[9px] font-bold"><span class="text-slate-500 truncate mr-2">${p}</span><span class="${color}">${val}</span></div>`;
         });
 
-        const obs = [['03.01 MOTIVO', document.getElementById('q03_01_txt').value],['03.01.05 OUTROS', document.getElementById('q03_01_05_txt').value],['05.02 OUTROS', document.getElementById('q05_02_txt').value],['06 OBS', document.getElementById('q06_txt').value]];
+        const getTxtVal = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+        const obs = [['03.01 MOTIVO', getTxtVal('q03_01_txt')],['03.01.05 OUTROS', getTxtVal('q03_01_05_txt')],['05.02 OUTROS', getTxtVal('q05_02_txt')],['06 OBS', getTxtVal('q06_txt')]];
         obs.forEach(t => { if(t[1].trim()) respDiv.innerHTML += `<div class="col-span-2 border-b py-0.5 text-[9px] uppercase"><strong class="text-blue-600">${t[0]}:</strong> ${t[1]}</div>`; });
 
         const pBox = document.getElementById('r-parecer-box');
