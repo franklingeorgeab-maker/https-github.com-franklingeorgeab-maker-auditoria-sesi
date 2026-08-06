@@ -1,0 +1,8 @@
+{
+  "name": "Sistema de Auditoria de EPA v2.01",
+  "description": "Aplicativo de auditoria de campo para Segurança do Trabalho com coleta de assinaturas e geração de relatórios PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
