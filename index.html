@@ -162,7 +162,10 @@
                 <button onclick="importarHistoricoJSON()" class="bg-slate-800 hover:bg-slate-900 text-white py-3 rounded-2xl font-black shadow-md uppercase text-[10px] tracking-wider transition-all flex items-center justify-center gap-1.5">
                     📤 Restaurar Backup (TXT/JSON)
                 </button>
-                <button onclick="limparHistoricoCompleto()" class="bg-red-600 hover:bg-red-700 text-white py-3 rounded-2xl font-black shadow-md uppercase text-[10px] tracking-wider transition-all flex items-center justify-center gap-1.5">
+                <button onclick="otimizarArmazenamento()" class="bg-amber-600 hover:bg-amber-700 text-white py-3 rounded-2xl font-black shadow-md uppercase text-[10px] tracking-wider transition-all flex items-center justify-center gap-1.5" title="Libera espaço no navegador comprimindo mídias do histórico">
+                    ⚡ Otimizar Memória
+                </button>
+                <button onclick="limparHistoricoCompleto()" class="sm:col-span-2 bg-red-600 hover:bg-red-700 text-white py-3 rounded-2xl font-black shadow-md uppercase text-[10px] tracking-wider transition-all flex items-center justify-center gap-1.5">
                     🗑️ Limpar Todo o Histórico
                 </button>
             </div>
@@ -993,40 +996,30 @@
         audits.push(audit);
         
         function tentarSalvarNoStorage(listaAudits) {
+            // Mantém fotos/assinaturas das últimas 5 auditorias; remove mídias de auditorias mais antigas para liberar 95% do armazenamento
+            const listaOtimizada = listaAudits.map((a, idx) => {
+                if (idx < listaAudits.length - 5) {
+                    return { ...a, photo: null, sigColab: null, sigAuditor: null };
+                }
+                return a;
+            });
+
             try {
-                localStorage.setItem('videplast_audited_history', JSON.stringify(listaAudits));
+                localStorage.setItem('videplast_audited_history', JSON.stringify(listaOtimizada));
                 return true;
             } catch (quotaErr) {
-                console.warn('LocalStorage cheio. Liberando espaço em histórico antigo...', quotaErr);
-                // 1º Passo: Limpa fotos antigas do histórico
-                let alterado = false;
-                for (let i = 0; i < listaAudits.length - 1; i++) {
-                    if (listaAudits[i].photo) {
-                        listaAudits[i].photo = null;
-                        alterado = true;
-                    }
-                }
-                if (alterado) {
-                    try {
-                        localStorage.setItem('videplast_audited_history', JSON.stringify(listaAudits));
-                        return true;
-                    } catch (e2) {}
-                }
-                // 2º Passo: Se ainda estourar, remove a foto do item atual
-                const semFotos = listaAudits.map(a => ({ ...a, photo: null }));
+                console.warn('LocalStorage cheio. Otimizando histórico antigo...', quotaErr);
+                const semMidias = listaAudits.map(a => ({ ...a, photo: null, sigColab: null, sigAuditor: null }));
                 try {
-                    localStorage.setItem('videplast_audited_history', JSON.stringify(semFotos));
+                    localStorage.setItem('videplast_audited_history', JSON.stringify(semMidias));
                     return true;
-                } catch (e3) {
-                    // 3º Passo: Se o histórico for gigante, retém os últimos 50 itens sem fotos
-                    if (listaAudits.length > 50) {
-                        const ultimos50 = semFotos.slice(-50);
-                        try {
-                            localStorage.setItem('videplast_audited_history', JSON.stringify(ultimos50));
-                            return true;
-                        } catch (e4) {
-                            console.error('Falha ao gravar no localStorage.', e4);
-                        }
+                } catch (e2) {
+                    const ultimos30 = semMidias.slice(-30);
+                    try {
+                        localStorage.setItem('videplast_audited_history', JSON.stringify(ultimos30));
+                        return true;
+                    } catch (e3) {
+                        console.error('Falha de armazenamento no navegador.', e3);
                     }
                 }
                 return false;
@@ -1034,6 +1027,42 @@
         }
 
         tentarSalvarNoStorage(audits);
+    }
+
+    function otimizarArmazenamento(silencioso = false) {
+        try {
+            const saved = localStorage.getItem('videplast_audited_history');
+            if (!saved) {
+                if (!silencioso) alert('Nenhum histórico encontrado para otimizar.');
+                return;
+            }
+            const tamanhoInicial = saved.length;
+            let audits = JSON.parse(saved);
+            if (!Array.isArray(audits) || audits.length === 0) {
+                if (!silencioso) alert('O histórico já está vazio.');
+                return;
+            }
+
+            // Mantém imagens apenas das últimas 3 auditorias
+            audits = audits.map((a, idx) => {
+                if (idx < audits.length - 3) {
+                    return { ...a, photo: null, sigColab: null, sigAuditor: null };
+                }
+                return a;
+            });
+
+            const novoJson = JSON.stringify(audits);
+            localStorage.setItem('videplast_audited_history', novoJson);
+            const kbLiberados = Math.round((tamanhoInicial - novoJson.length) / 1024);
+
+            if (!silencioso) {
+                alert(`Memória do navegador otimizada com sucesso!\n\nForam liberados ${kbLiberados} KB de espaço.\nTodas as informações e respostas em texto continuam salvas no histórico.`);
+                renderizarHistorico();
+            }
+        } catch (e) {
+            console.error('Erro ao otimizar memória:', e);
+            if (!silencioso) alert('Erro ao otimizar memória.');
+        }
     }
 
     function exportarHistoricoCSV() {
@@ -1690,7 +1719,7 @@
         const canvasVisible = !document.getElementById('auditor-canvas-area').classList.contains('hidden');
         if (canvasVisible) {
             if (state.auditorPad && !state.auditorPad.isEmpty()) {
-                sigData = state.auditorPad.toDataURL();
+                sigData = getCompressedSignature(state.auditorPad);
             } else if (!sigData) {
                 return alert('Por favor, faça sua assinatura ou preencha os dados!');
             }
@@ -1820,11 +1849,36 @@
         }
     });
 
+    function getCompressedSignature(pad) {
+        if (!pad || pad.isEmpty()) return null;
+        try {
+            const rawCanvas = pad._canvas || pad.canvas;
+            if (!rawCanvas) return pad.toDataURL();
+
+            const tempCanvas = document.createElement('canvas');
+            const targetWidth = 400;
+            const targetHeight = Math.round(targetWidth * (rawCanvas.height / (rawCanvas.width || 1))) || 200;
+            
+            tempCanvas.width = targetWidth;
+            tempCanvas.height = targetHeight;
+            
+            const ctx = tempCanvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, targetWidth, targetHeight);
+            ctx.drawImage(rawCanvas, 0, 0, targetWidth, targetHeight);
+            
+            return tempCanvas.toDataURL('image/jpeg', 0.7);
+        } catch (e) {
+            console.warn('Fallback para assinatura padrão:', e);
+            return pad.toDataURL();
+        }
+    }
+
     function confirmarAssinatura() {
         if (!state.pad || state.pad.isEmpty()) return alert('Por favor, faça a assinatura do trabalhador para confirmar!');
         
         try {
-            state.sigColab = state.pad.toDataURL();
+            state.sigColab = getCompressedSignature(state.pad);
         } catch (e) {
             console.error('Erro ao obter imagem da assinatura:', e);
         }
@@ -2431,6 +2485,12 @@
 
     // --- CARREGAMENTO INICIAL ---
     window.addEventListener('DOMContentLoaded', function() {
+        // Verifica e otimiza silenciosamente se o histórico estiver grande
+        const historyData = localStorage.getItem('videplast_audited_history');
+        if (historyData && historyData.length > 1500000) {
+            otimizarArmazenamento(true);
+        }
+
         // Render initial dynamic logos and settings
         renderLogos();
         renderLogoPreviews();
