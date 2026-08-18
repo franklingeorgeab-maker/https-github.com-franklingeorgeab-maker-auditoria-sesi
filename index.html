@@ -898,6 +898,191 @@
         }
     });
 
+    // --- MOTOR DE ARMAZENAMENTO ROBUSTO (INDEXEDDB + MEMÓRIA) ---
+    // Substitui o limite frágil de 5MB do localStorage por IndexedDB com capacidade ilimitada,
+    // garantindo funcionamento 100% offline sem necessidade de conexão externa ou bibliotecas online.
+    const AuditoriaDB = {
+        dbName: 'AuditoriaEPADB_v2',
+        dbVersion: 1,
+        _db: null,
+        _isReady: false,
+
+        async init() {
+            if (this._isReady && this._db) return this._db;
+            return new Promise((resolve) => {
+                if (!window.indexedDB) {
+                    console.warn('IndexedDB não disponível. Usando fallback de memória/storage.');
+                    this._isReady = true;
+                    return resolve(null);
+                }
+                try {
+                    const req = indexedDB.open(this.dbName, this.dbVersion);
+                    req.onupgradeneeded = (e) => {
+                        const db = e.target.result;
+                        if (!db.objectStoreNames.contains('audits')) {
+                            db.createObjectStore('audits', { keyPath: 'id' });
+                        }
+                    };
+                    req.onsuccess = (e) => {
+                        this._db = e.target.result;
+                        this._isReady = true;
+                        resolve(this._db);
+                    };
+                    req.onerror = (e) => {
+                        console.warn('Erro ao abrir IndexedDB:', e);
+                        this._isReady = true;
+                        resolve(null);
+                    };
+                } catch (err) {
+                    console.warn('Falha na inicialização do IndexedDB:', err);
+                    this._isReady = true;
+                    resolve(null);
+                }
+            });
+        },
+
+        async getAudits() {
+            if (Array.isArray(state.auditedHistory) && state.auditedHistory.length > 0) {
+                return state.auditedHistory;
+            }
+
+            const db = await this.init();
+            if (db) {
+                try {
+                    const list = await new Promise((resolve) => {
+                        const tx = db.transaction(['audits'], 'readonly');
+                        const store = tx.objectStore('audits');
+                        const req = store.getAll();
+                        req.onsuccess = () => resolve(req.result || []);
+                        req.onerror = () => resolve([]);
+                    });
+                    if (list && list.length > 0) {
+                        state.auditedHistory = list;
+                        return list;
+                    }
+                } catch (e) {
+                    console.warn('Erro ao ler audits do IndexedDB:', e);
+                }
+            }
+
+            // Fallback / Migração inicial de dados legados do localStorage
+            try {
+                const saved = localStorage.getItem('videplast_audited_history');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                        state.auditedHistory = parsed;
+                        this.saveAllAudits(parsed).catch(() => {});
+                        return parsed;
+                    }
+                }
+            } catch (e) {}
+
+            state.auditedHistory = [];
+            return [];
+        },
+
+        async saveAudit(audit) {
+            if (!audit) return;
+            if (!audit.id) {
+                audit.id = `${audit.cracha || 'sem_cracha'}_${audit.date || Date.now()}`;
+            }
+
+            if (!Array.isArray(state.auditedHistory)) {
+                state.auditedHistory = [];
+            }
+
+            // Remove duplicados do mesmo colaborador
+            state.auditedHistory = state.auditedHistory.filter(a => !(a.cracha === audit.cracha || (a.nome && audit.nome && normalizeStr(a.nome) === normalizeStr(audit.nome))));
+            state.auditedHistory.push(audit);
+
+            // Salva no IndexedDB de forma assíncrona
+            const db = await this.init();
+            if (db) {
+                try {
+                    const tx = db.transaction(['audits'], 'readwrite');
+                    const store = tx.objectStore('audits');
+                    store.put(audit);
+                } catch (err) {
+                    console.warn('Erro ao salvar no IndexedDB:', err);
+                }
+            }
+
+            // Salva backup seguro e leve no localStorage
+            try {
+                const lightweight = state.auditedHistory.map((a, idx) => {
+                    if (idx < state.auditedHistory.length - 2) {
+                        return { ...a, photo: null, sigColab: null, sigAuditor: null };
+                    }
+                    return a;
+                });
+                localStorage.setItem('videplast_audited_history', JSON.stringify(lightweight));
+            } catch (e) {
+                try {
+                    const ultraLight = state.auditedHistory.map(a => ({ ...a, photo: null, sigColab: null, sigAuditor: null }));
+                    localStorage.setItem('videplast_audited_history', JSON.stringify(ultraLight));
+                } catch (e2) {}
+            }
+        },
+
+        async saveAllAudits(auditsList) {
+            state.auditedHistory = auditsList || [];
+            const db = await this.init();
+            if (db && Array.isArray(auditsList)) {
+                try {
+                    const tx = db.transaction(['audits'], 'readwrite');
+                    const store = tx.objectStore('audits');
+                    store.clear();
+                    auditsList.forEach(a => {
+                        if (!a.id) a.id = `${a.cracha || 'sem_cracha'}_${a.date || Date.now()}`;
+                        store.put(a);
+                    });
+                } catch (e) {}
+            }
+        },
+
+        async removeAudit(cracha, nome) {
+            if (!Array.isArray(state.auditedHistory)) state.auditedHistory = [];
+            state.auditedHistory = state.auditedHistory.filter(a => !(a.cracha === cracha && a.nome === nome));
+            
+            const db = await this.init();
+            if (db) {
+                try {
+                    const tx = db.transaction(['audits'], 'readwrite');
+                    const store = tx.objectStore('audits');
+                    const req = store.getAll();
+                    req.onsuccess = () => {
+                        const items = req.result || [];
+                        items.forEach(item => {
+                            if (item.cracha === cracha && item.nome === nome) {
+                                store.delete(item.id);
+                            }
+                        });
+                    };
+                } catch (e) {}
+            }
+
+            try {
+                localStorage.setItem('videplast_audited_history', JSON.stringify(state.auditedHistory));
+            } catch (e) {}
+        },
+
+        async clearAll() {
+            state.auditedHistory = [];
+            const db = await this.init();
+            if (db) {
+                try {
+                    const tx = db.transaction(['audits'], 'readwrite');
+                    const store = tx.objectStore('audits');
+                    store.clear();
+                } catch (e) {}
+            }
+            try {
+                localStorage.removeItem('videplast_audited_history');
+            } catch (e) {}
+        }
+    };
+
     function getRecentAudit(colab) {
         if (!colab) return null;
         const keys = Object.keys(colab);
@@ -907,14 +1092,12 @@
         const cracha = colab[kMat] ? colab[kMat].toString().trim() : '';
         const nome = colab[kNome] ? colab[kNome].toString().trim() : '';
         
-        let audits = [];
-        try {
-            const saved = localStorage.getItem('videplast_audited_history');
-            if (saved) {
-                audits = JSON.parse(saved);
-            }
-        } catch (e) {
-            console.error(e);
+        let audits = Array.isArray(state.auditedHistory) ? state.auditedHistory : [];
+        if (audits.length === 0) {
+            try {
+                const saved = localStorage.getItem('videplast_audited_history');
+                if (saved) audits = JSON.parse(saved);
+            } catch (e) {}
         }
         
         // Find if there is any audit for this cracha or name
@@ -963,6 +1146,7 @@
         const localTreinamentoVal = localDeTreinamentoInput ? localDeTreinamentoInput.value.trim() : '';
 
         const audit = {
+            id: `${cracha}_${Date.now()}`,
             cracha: cracha,
             nome: nome,
             date: new Date().toISOString(),
@@ -981,65 +1165,18 @@
             }
         };
         
-        let audits = [];
-        try {
-            const saved = localStorage.getItem('videplast_audited_history');
-            if (saved) {
-                audits = JSON.parse(saved);
-            }
-        } catch (e) {
-            console.error(e);
-        }
-        
-        // Remove old entries for the same employee to keep it clean
-        audits = audits.filter(a => !(a.cracha === cracha || normalizeStr(a.nome) === normalizeStr(nome)));
-        audits.push(audit);
-        
-        function tentarSalvarNoStorage(listaAudits) {
-            // Mantém fotos/assinaturas das últimas 5 auditorias; remove mídias de auditorias mais antigas para liberar 95% do armazenamento
-            const listaOtimizada = listaAudits.map((a, idx) => {
-                if (idx < listaAudits.length - 5) {
-                    return { ...a, photo: null, sigColab: null, sigAuditor: null };
-                }
-                return a;
-            });
-
-            try {
-                localStorage.setItem('videplast_audited_history', JSON.stringify(listaOtimizada));
-                return true;
-            } catch (quotaErr) {
-                console.warn('LocalStorage cheio. Otimizando histórico antigo...', quotaErr);
-                const semMidias = listaAudits.map(a => ({ ...a, photo: null, sigColab: null, sigAuditor: null }));
-                try {
-                    localStorage.setItem('videplast_audited_history', JSON.stringify(semMidias));
-                    return true;
-                } catch (e2) {
-                    const ultimos30 = semMidias.slice(-30);
-                    try {
-                        localStorage.setItem('videplast_audited_history', JSON.stringify(ultimos30));
-                        return true;
-                    } catch (e3) {
-                        console.error('Falha de armazenamento no navegador.', e3);
-                    }
-                }
-                return false;
-            }
-        }
-
-        tentarSalvarNoStorage(audits);
+        AuditoriaDB.saveAudit(audit);
     }
 
     function otimizarArmazenamento(silencioso = false) {
         try {
-            const saved = localStorage.getItem('videplast_audited_history');
-            if (!saved) {
-                if (!silencioso) alert('Nenhum histórico encontrado para otimizar.');
-                return;
+            let audits = Array.isArray(state.auditedHistory) ? state.auditedHistory : [];
+            if (audits.length === 0) {
+                const saved = localStorage.getItem('videplast_audited_history');
+                if (saved) audits = JSON.parse(saved);
             }
-            const tamanhoInicial = saved.length;
-            let audits = JSON.parse(saved);
             if (!Array.isArray(audits) || audits.length === 0) {
-                if (!silencioso) alert('O histórico já está vazio.');
+                if (!silencioso) alert('O histórico já está limpo.');
                 return;
             }
 
@@ -1051,17 +1188,15 @@
                 return a;
             });
 
-            const novoJson = JSON.stringify(audits);
-            localStorage.setItem('videplast_audited_history', novoJson);
-            const kbLiberados = Math.round((tamanhoInicial - novoJson.length) / 1024);
+            AuditoriaDB.saveAllAudits(audits);
 
             if (!silencioso) {
-                alert(`Memória do navegador otimizada com sucesso!\n\nForam liberados ${kbLiberados} KB de espaço.\nTodas as informações e respostas em texto continuam salvas no histórico.`);
+                alert(`Armazenamento otimizado com sucesso!\nTodas as informações e dados em texto continuam salvos no histórico.`);
                 renderizarHistorico();
             }
         } catch (e) {
             console.error('Erro ao otimizar memória:', e);
-            if (!silencioso) alert('Erro ao otimizar memória.');
+            if (!silencioso) alert('Erro ao otimizar armazenamento.');
         }
     }
 
@@ -1191,14 +1326,12 @@
         const filterInput = document.getElementById('input-busca-historico');
         const query = filterInput ? filterInput.value.trim().toLowerCase() : '';
         
-        let audits = [];
-        try {
-            const saved = localStorage.getItem('videplast_audited_history');
-            if (saved) {
-                audits = JSON.parse(saved);
-            }
-        } catch (e) {
-            console.error(e);
+        let audits = Array.isArray(state.auditedHistory) ? [...state.auditedHistory] : [];
+        if (audits.length === 0) {
+            try {
+                const saved = localStorage.getItem('videplast_audited_history');
+                if (saved) audits = JSON.parse(saved);
+            } catch (e) {}
         }
         
         // Filter audits by cracha or name
@@ -1280,11 +1413,13 @@
     }
 
     function visualizarAuditDoHistorico(cracha, date) {
-        let audits = [];
-        try {
-            const saved = localStorage.getItem('videplast_audited_history');
-            if (saved) audits = JSON.parse(saved);
-        } catch (e) {}
+        let audits = Array.isArray(state.auditedHistory) ? state.auditedHistory : [];
+        if (audits.length === 0) {
+            try {
+                const saved = localStorage.getItem('videplast_audited_history');
+                if (saved) audits = JSON.parse(saved);
+            } catch (e) {}
+        }
 
         const audit = audits.find(a => (a.cracha === cracha && a.date === date) || (a.cracha === cracha));
         if (!audit) return alert('Auditoria não encontrada no registro!');
@@ -1310,11 +1445,13 @@
     }
 
     function exportarHistoricoJSON() {
-        let audits = [];
-        try {
-            const saved = localStorage.getItem('videplast_audited_history');
-            if (saved) audits = JSON.parse(saved);
-        } catch (e) {}
+        let audits = Array.isArray(state.auditedHistory) ? state.auditedHistory : [];
+        if (audits.length === 0) {
+            try {
+                const saved = localStorage.getItem('videplast_audited_history');
+                if (saved) audits = JSON.parse(saved);
+            } catch (e) {}
+        }
 
         if (audits.length === 0) {
             return alert('Não há histórico registrado para exportar!');
@@ -1346,12 +1483,7 @@
                         throw new Error('Formato inválido.');
                     }
                     
-                    let currentAudits = [];
-                    try {
-                        const saved = localStorage.getItem('videplast_audited_history');
-                        if (saved) currentAudits = JSON.parse(saved);
-                    } catch (err) {}
-
+                    let currentAudits = Array.isArray(state.auditedHistory) ? [...state.auditedHistory] : [];
                     let count = 0;
                     imported.forEach(imp => {
                         const idx = currentAudits.findIndex(c => c.cracha === imp.cracha && c.date === imp.date);
@@ -1363,7 +1495,7 @@
                         }
                     });
 
-                    localStorage.setItem('videplast_audited_history', JSON.stringify(currentAudits));
+                    AuditoriaDB.saveAllAudits(currentAudits);
                     alert(`Backup restaurado com sucesso! ${count} nova(s) auditoria(s) importada(s).`);
                     renderizarHistorico();
                 } catch (err) {
@@ -1383,22 +1515,14 @@
     function removerDoHistorico(cracha, nome) {
         if (!confirm(`Deseja remover ${nome} (Crachá: ${cracha}) do histórico de auditorias e liberá-lo para uma nova auditoria?`)) return;
         
-        let audits = [];
-        try {
-            const saved = localStorage.getItem('videplast_audited_history');
-            if (saved) audits = JSON.parse(saved);
-        } catch (e) {}
-        
-        audits = audits.filter(a => !(a.cracha === cracha && a.nome === nome));
-        localStorage.setItem('videplast_audited_history', JSON.stringify(audits));
-        
+        AuditoriaDB.removeAudit(cracha, nome);
         renderizarHistorico();
     }
     
     function limparHistoricoCompleto() {
         if (!confirm('Deseja realmente limpar todo o histórico de colaboradores auditados? Isso permitirá que qualquer colaborador seja auditado novamente de imediato.')) return;
         
-        localStorage.removeItem('videplast_audited_history');
+        AuditoriaDB.clearAll();
         renderizarHistorico();
     }
 
@@ -1773,7 +1897,16 @@
         if (!canvas || !container) return;
         if (!container.offsetWidth || !container.offsetHeight) return;
 
-        // Salva estado da assinatura se o usuário já tiver começado a rabiscar
+        const ratio = Math.max(window.devicePixelRatio || 1, 1);
+        const targetW = container.offsetWidth * ratio;
+        const targetH = container.offsetHeight * ratio;
+
+        // Se o canvas já tiver as dimensões corretas e o pad estiver ativo, não reseta para não apagar o traço
+        if (state.pad && canvas.width === targetW && canvas.height === targetH) {
+            return;
+        }
+
+        // Salva traçado existente caso haja mudança real de tamanho de tela
         let existingData = null;
         if (state.pad && !state.pad.isEmpty()) {
             try {
@@ -1781,9 +1914,8 @@
             } catch (e) {}
         }
 
-        const ratio = Math.max(window.devicePixelRatio || 1, 1);
-        canvas.width = container.offsetWidth * ratio;
-        canvas.height = container.offsetHeight * ratio;
+        canvas.width = targetW;
+        canvas.height = targetH;
         const ctx = canvas.getContext("2d");
         ctx.scale(ratio, ratio);
         
@@ -1802,6 +1934,11 @@
         }
         
         state.pad.on();
+
+        // Previne qualquer gesto de "arrastar para voltar" do navegador móvel (Safari/Chrome)
+        canvas.addEventListener('touchstart', function(e) { e.stopPropagation(); }, { passive: false });
+        canvas.addEventListener('touchmove', function(e) { e.stopPropagation(); }, { passive: false });
+        canvas.addEventListener('touchend', function(e) { e.stopPropagation(); }, { passive: false });
     }
 
     function cancelarAssinatura() {
@@ -1842,7 +1979,7 @@
         if (titleEl) titleEl.textContent = 'Assinatura do Trabalhador';
     }
 
-    // Re-inicializa o canvas se a tela for redimensionada ou rotacionada
+    // Re-inicializa o canvas se a tela for rotacionada
     window.addEventListener('resize', function() {
         const modal = document.getElementById('modal-sig');
         if (modal && (modal.classList.contains('active') || !modal.classList.contains('hidden'))) {
@@ -1851,10 +1988,10 @@
     });
 
     function getCompressedSignature(pad) {
-        if (!pad || pad.isEmpty()) return null;
+        if (!pad) return null;
         try {
             const rawCanvas = pad._canvas || pad.canvas;
-            if (!rawCanvas) return pad.toDataURL();
+            if (!rawCanvas) return pad.toDataURL ? pad.toDataURL() : null;
 
             const tempCanvas = document.createElement('canvas');
             const targetWidth = 400;
@@ -1871,22 +2008,33 @@
             return tempCanvas.toDataURL('image/jpeg', 0.7);
         } catch (e) {
             console.warn('Fallback para assinatura padrão:', e);
-            return pad.toDataURL();
+            return pad.toDataURL ? pad.toDataURL() : null;
         }
     }
 
     function confirmarAssinatura(e) {
         if (e && e.preventDefault) e.preventDefault();
 
-        if (!state.pad || state.pad.isEmpty()) {
-            return alert('Por favor, faça a assinatura do trabalhador para confirmar!');
+        let sig = null;
+        if (state.pad && !state.pad.isEmpty()) {
+            sig = getCompressedSignature(state.pad);
+        }
+
+        if (!sig) {
+            // Tenta obter direto do elemento canvas
+            const rawCanvas = document.getElementById('sig-canvas');
+            if (rawCanvas) {
+                try {
+                    sig = rawCanvas.toDataURL('image/jpeg', 0.7);
+                } catch (err) {}
+            }
+        }
+
+        if (!sig || (state.pad && state.pad.isEmpty())) {
+            return alert('Por favor, faça a assinatura do trabalhador no quadro para confirmar!');
         }
         
-        try {
-            state.sigColab = getCompressedSignature(state.pad);
-        } catch (err) {
-            console.error('Erro ao obter imagem da assinatura:', err);
-        }
+        state.sigColab = sig;
         
         // Carrega dados e assinatura pré-configurados do Auditor
         const savedSig = localStorage.getItem('videplast_auditor_sig') || '';
@@ -1903,7 +2051,7 @@
         // Transiciona imediatamente para a Tela 3 (Relatório)
         ir('screen-3');
 
-        // Salva no histórico de auditorias em background
+        // Salva no banco de dados em segundo plano
         try {
             saveCompletedAudit();
         } catch (err) {
@@ -2535,11 +2683,12 @@
     }
 
     // --- CARREGAMENTO INICIAL ---
-    window.addEventListener('DOMContentLoaded', function() {
-        // Verifica e otimiza silenciosamente se o histórico estiver grande
-        const historyData = localStorage.getItem('videplast_audited_history');
-        if (historyData && historyData.length > 1500000) {
-            otimizarArmazenamento(true);
+    window.addEventListener('DOMContentLoaded', async function() {
+        // Inicializa o banco de dados IndexedDB e pré-carrega histórico
+        try {
+            await AuditoriaDB.getAudits();
+        } catch (err) {
+            console.warn('Inicialização do banco de dados:', err);
         }
 
         // Render initial dynamic logos and settings
