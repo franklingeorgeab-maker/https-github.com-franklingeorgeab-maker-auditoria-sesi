@@ -553,7 +553,7 @@
             <button type="button" onclick="state.pad && state.pad.clear()" class="sm:hidden bg-slate-100 text-slate-700 px-4 py-3 rounded-xl text-xs font-black uppercase tracking-wider">
                 🧹 Limpar
             </button>
-            <button type="button" id="sig-confirm-btn" onclick="confirmarAssinatura()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 sm:py-4 rounded-xl sm:rounded-2xl font-black uppercase text-sm sm:text-lg shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2">
+            <button type="button" id="sig-confirm-btn" onclick="confirmarAssinatura(event)" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 sm:py-4 rounded-xl sm:rounded-2xl font-black uppercase text-sm sm:text-lg shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2">
                 ✓ Confirmar Assinatura
             </button>
         </div>
@@ -1304,6 +1304,7 @@
         if (document.getElementById('q06_txt')) document.getElementById('q06_txt').value = audit.respostas ? (audit.respostas['06 OBS'] || '') : '';
         if (document.getElementById('input-local-treinamento')) document.getElementById('input-local-treinamento').value = audit.respostas ? (audit.respostas['LOCAL_TREINAMENTO'] || '') : '';
 
+        state.origemNavegacao = 'historico';
         renderizarRelatorio();
         ir('screen-3');
     }
@@ -1874,160 +1875,210 @@
         }
     }
 
-    function confirmarAssinatura() {
-        if (!state.pad || state.pad.isEmpty()) return alert('Por favor, faça a assinatura do trabalhador para confirmar!');
+    function confirmarAssinatura(e) {
+        if (e && e.preventDefault) e.preventDefault();
+
+        if (!state.pad || state.pad.isEmpty()) {
+            return alert('Por favor, faça a assinatura do trabalhador para confirmar!');
+        }
         
         try {
             state.sigColab = getCompressedSignature(state.pad);
-        } catch (e) {
-            console.error('Erro ao obter imagem da assinatura:', e);
+        } catch (err) {
+            console.error('Erro ao obter imagem da assinatura:', err);
         }
         
         // Carrega dados e assinatura pré-configurados do Auditor
         const savedSig = localStorage.getItem('videplast_auditor_sig') || '';
         state.sigAuditor = savedSig;
+        state.origemNavegacao = 'auditoria';
         
+        // Fecha o modal de assinatura
         const modal = document.getElementById('modal-sig');
         if (modal) {
             modal.classList.remove('active');
             modal.classList.add('hidden');
         }
         
-        // Salva no histórico de auditorias
+        // Transiciona imediatamente para a Tela 3 (Relatório)
+        ir('screen-3');
+
+        // Salva no histórico de auditorias em background
         try {
             saveCompletedAudit();
         } catch (err) {
             console.error('Erro ao salvar auditoria no histórico:', err);
         }
         
+        // Renderiza dados completos do relatório na tela
         try {
             renderizarRelatorio();
-            ir('screen-3');
         } catch (err) {
             console.error('Erro ao renderizar relatório:', err);
-            ir('screen-3');
-        }
-
-        if (!savedSig) {
-            setTimeout(() => {
-                alert('Atenção: Os dados do Auditor (nome, registro, assinatura) não foram cadastrados na tela inicial. Você pode cadastrá-los na aba "Auditor" na tela de login para que saiam preenchidos automaticamente nos próximos relatórios!');
-            }, 500);
         }
     }
 
     // --- RELATÓRIO E PDF ---
     function renderizarRelatorio() {
+        const colab = state.colab || {};
+        const ans = state.ans || {};
+        
         const dataHoje = formatarData(new Date());
-        document.getElementById('r-data').innerHTML = `EMISSÃO: ${dataHoje}`;
-        const identDiv = document.getElementById('r-ident'); identDiv.innerHTML = '';
-        Object.entries(state.colab).forEach(([k,v]) => {
-            if (!k || k.toUpperCase().includes('EMPTY') || k.trim() === '') return;
-            const valorFormatado = formatarValorBase(v, k);
-            identDiv.innerHTML += `<div><span class="text-slate-400 font-bold uppercase text-[8px] mr-1">${k}:</span> <span class="uppercase font-bold text-slate-800">${valorFormatado}</span></div>`;
-        });
+        const dataEl = document.getElementById('r-data');
+        if (dataEl) dataEl.innerHTML = `EMISSÃO: ${dataHoje}`;
 
-        const respDiv = document.getElementById('r-respostas'); respDiv.innerHTML = '';
-        const list = [
-            '01. Uso do protetor no momento da auditoria?', '02. Colocação do protetor de forma adequada?', '03. Uso do protetor escolhido?',
-            '03.01.01. Não recebeu o protetor adequado?', '03.01.02. Segurança autorizou a troca?', '03.01.03. Médico autorizou a troca?',
-            '03.01.04. Não se adaptou ao protetor selecionado?', '04. Trabalhador refere conforto com o protetor auditivo?', '04.01 Higiene?',
-            '05. Condições Técnicas?', '05.01. Caso inadequada pq?'
-        ];
-        list.forEach(p => {
-            const val = state.ans[p] || '---';
-            const color = (val === 'Não' || val === 'Ruim' || val === 'Inadequada' || val === 'Plug Alterado' || val === 'Cordão Alterado') ? 'text-red-600' : 'text-blue-700';
-            respDiv.innerHTML += `<div class="flex justify-between border-b border-slate-50 py-0.5 text-[9px] font-bold"><span class="text-slate-500 truncate mr-2">${p}</span><span class="${color}">${val}</span></div>`;
-        });
+        const identDiv = document.getElementById('r-ident'); 
+        if (identDiv) {
+            identDiv.innerHTML = '';
+            Object.entries(colab).forEach(([k,v]) => {
+                if (!k || k.toUpperCase().includes('EMPTY') || k.trim() === '') return;
+                const valorFormatado = formatarValorBase(v, k);
+                identDiv.innerHTML += `<div><span class="text-slate-400 font-bold uppercase text-[8px] mr-1">${k}:</span> <span class="uppercase font-bold text-slate-800">${valorFormatado}</span></div>`;
+            });
+        }
 
-        const getTxtVal = id => { const el = document.getElementById(id); return el ? el.value : ''; };
-        const obs = [['03.01 MOTIVO', getTxtVal('q03_01_txt')],['03.01.05 OUTROS', getTxtVal('q03_01_05_txt')],['05.02 OUTROS', getTxtVal('q05_02_txt')],['06 OBS', getTxtVal('q06_txt')]];
-        obs.forEach(t => { if(t[1].trim()) respDiv.innerHTML += `<div class="col-span-2 border-b py-0.5 text-[9px] uppercase"><strong class="text-blue-600">${t[0]}:</strong> ${t[1]}</div>`; });
+        const respDiv = document.getElementById('r-respostas'); 
+        if (respDiv) {
+            respDiv.innerHTML = '';
+            const list = [
+                '01. Uso do protetor no momento da auditoria?', '02. Colocação do protetor de forma adequada?', '03. Uso do protetor escolhido?',
+                '03.01.01. Não recebeu o protetor adequado?', '03.01.02. Segurança autorizou a troca?', '03.01.03. Médico autorizou a troca?',
+                '03.01.04. Não se adaptou ao protetor selecionado?', '04. Trabalhador refere conforto com o protetor auditivo?', '04.01 Higiene?',
+                '05. Condições Técnicas?', '05.01. Caso inadequada pq?'
+            ];
+            list.forEach(p => {
+                const val = ans[p] || '---';
+                const color = (val === 'Não' || val === 'Ruim' || val === 'Inadequada' || val === 'Plug Alterado' || val === 'Cordão Alterado') ? 'text-red-600' : 'text-blue-700';
+                respDiv.innerHTML += `<div class="flex justify-between border-b border-slate-50 py-0.5 text-[9px] font-bold"><span class="text-slate-500 truncate mr-2">${p}</span><span class="${color}">${val}</span></div>`;
+            });
 
+            const getTxtVal = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+            const obs = [['03.01 MOTIVO', getTxtVal('q03_01_txt')],['03.01.05 OUTROS', getTxtVal('q03_01_05_txt')],['05.02 OUTROS', getTxtVal('q05_02_txt')],['06 OBS', getTxtVal('q06_txt')]];
+            obs.forEach(t => { if(t[1].trim()) respDiv.innerHTML += `<div class="col-span-2 border-b py-0.5 text-[9px] uppercase"><strong class="text-blue-600">${t[0]}:</strong> ${t[1]}</div>`; });
+        }
+
+        const parecerVal = ans['PARECER'] || '---';
         const pBox = document.getElementById('r-parecer-box');
         const pVal = document.getElementById('parecer-val');
-        pVal.textContent = state.ans['PARECER'];
-        pBox.className = `p-3 rounded-xl text-center border-4 font-black text-2xl uppercase mb-3 ${state.ans['PARECER'] === 'APROVADO' ? 'border-blue-600 text-blue-600 bg-blue-50' : 'border-red-600 text-red-600 bg-red-50'}`;
+        if (pVal) pVal.textContent = parecerVal;
+        if (pBox) {
+            pBox.className = `p-3 rounded-xl text-center border-4 font-black text-2xl uppercase mb-3 ${parecerVal === 'APROVADO' ? 'border-blue-600 text-blue-600 bg-blue-50' : 'border-red-600 text-red-600 bg-red-50'}`;
+        }
 
         // Tabela de Treinamento / Registro (Dinâmica)
         const agora = new Date();
         const horaHoje = agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-        const keys = Object.keys(state.colab);
+        const keys = Object.keys(colab);
         const kLocal = keys.find(k => normalizeStr(k).includes('local') || normalizeStr(k).includes('unid') || normalizeStr(k).includes('setor') || normalizeStr(k).includes('depto')) || keys[2];
-        const localVal = (state.colab[kLocal] || 'EPA').toString().toUpperCase();
+        const localVal = (colab[kLocal] || 'EPA').toString().toUpperCase();
 
-        if (state.ans['PARECER'] === 'APROVADO') {
-            document.getElementById('box-retreinamento').classList.add('hidden');
-            // Remove a logo do SESI em auditoria
-            document.getElementById('r-sesi-logo').classList.add('hidden');
-        } else if (state.ans['PARECER'] === 'TREINAMENTO') {
-            document.getElementById('box-retreinamento').classList.remove('hidden');
-            document.getElementById('r-table-title').textContent = 'Agendamento de Retreinamento:';
-            document.getElementById('r-table-title').className = 'text-[9px] font-black uppercase text-red-600 mb-1';
-            
-            document.getElementById('r-table-data').textContent = dataHoje;
-            document.getElementById('r-table-hora').textContent = horaHoje;
-            
-            if (state.sigColab) {
-                const imgColab = document.getElementById('r-table-sig-trabalhador');
-                imgColab.src = state.sigColab;
-                imgColab.classList.remove('hidden');
-            } else {
-                document.getElementById('r-table-sig-trabalhador').classList.add('hidden');
+        const boxRetreinamento = document.getElementById('box-retreinamento');
+        const sesiLogo = document.getElementById('r-sesi-logo');
+
+        if (parecerVal === 'APROVADO') {
+            if (boxRetreinamento) boxRetreinamento.classList.add('hidden');
+            if (sesiLogo) sesiLogo.classList.add('hidden');
+        } else if (parecerVal === 'TREINAMENTO') {
+            if (boxRetreinamento) boxRetreinamento.classList.remove('hidden');
+            const tableTitle = document.getElementById('r-table-title');
+            if (tableTitle) {
+                tableTitle.textContent = 'Agendamento de Retreinamento:';
+                tableTitle.className = 'text-[9px] font-black uppercase text-red-600 mb-1';
             }
             
-            // Restaura coluna "Assinatura Responsável" e exibe assinatura se houver
-            document.getElementById('r-table-header-col4').textContent = 'Assinatura Responsável';
-            document.getElementById('r-table-cell-col4').innerHTML = `<img id="r-table-sig-responsavel" class="max-h-8 mx-auto hidden">`;
+            const tableData = document.getElementById('r-table-data');
+            if (tableData) tableData.textContent = dataHoje;
+            const tableHora = document.getElementById('r-table-hora');
+            if (tableHora) tableHora.textContent = horaHoje;
             
-            if (state.sigAuditor) {
-                const imgResp = document.getElementById('r-table-sig-responsavel');
-                imgResp.src = state.sigAuditor;
-                imgResp.classList.remove('hidden');
+            const imgColab = document.getElementById('r-table-sig-trabalhador');
+            if (imgColab) {
+                if (state.sigColab) {
+                    imgColab.src = state.sigColab;
+                    imgColab.classList.remove('hidden');
+                } else {
+                    imgColab.classList.add('hidden');
+                }
+            }
+            
+            const headerCol4 = document.getElementById('r-table-header-col4');
+            if (headerCol4) headerCol4.textContent = 'Assinatura Responsável';
+
+            const cellCol4 = document.getElementById('r-table-cell-col4');
+            if (cellCol4) {
+                cellCol4.innerHTML = `<img id="r-table-sig-responsavel" class="max-h-8 mx-auto hidden">`;
+                if (state.sigAuditor) {
+                    const imgResp = document.getElementById('r-table-sig-responsavel');
+                    if (imgResp) {
+                        imgResp.src = state.sigAuditor;
+                        imgResp.classList.remove('hidden');
+                    }
+                }
             }
             
             // Pega o valor editado no formulário anterior, ou o valor padrão se vazio
             const localDeTreinamentoInput = document.getElementById('input-local-treinamento');
             const inputLocalVal = (localDeTreinamentoInput && localDeTreinamentoInput.value.trim()) ? localDeTreinamentoInput.value.trim().toUpperCase() : localVal;
 
-            document.getElementById('r-table-row-local').classList.remove('hidden');
-            document.getElementById('r-table-row-local').innerHTML = `<td colspan="4" class="text-left-header font-bold text-[10px]" style="height: 25px;"><strong>Local do treinamento:</strong> <input type="text" id="r-table-input-local" class="border border-slate-300 rounded px-2 py-0.5 outline-none font-bold text-[10px] uppercase w-2/3 bg-white text-slate-800" value="${inputLocalVal}"></td>`;
+            const rowLocal = document.getElementById('r-table-row-local');
+            if (rowLocal) {
+                rowLocal.classList.remove('hidden');
+                rowLocal.innerHTML = `<td colspan="4" class="text-left-header font-bold text-[10px]" style="height: 25px;"><strong>Local do treinamento:</strong> <input type="text" id="r-table-input-local" class="border border-slate-300 rounded px-2 py-0.5 outline-none font-bold text-[10px] uppercase w-2/3 bg-white text-slate-800" value="${inputLocalVal}"></td>`;
+            }
             
             // Mantém a logo do SESI em treinamento
-            document.getElementById('r-sesi-logo').classList.remove('hidden');
+            if (sesiLogo) sesiLogo.classList.remove('hidden');
         } else {
-            document.getElementById('box-retreinamento').classList.add('hidden');
-            document.getElementById('r-sesi-logo').classList.remove('hidden');
+            if (boxRetreinamento) boxRetreinamento.classList.add('hidden');
+            if (sesiLogo) sesiLogo.classList.remove('hidden');
         }
 
         // Foto
-        if(state.photo) {
-            document.getElementById('r-foto-img').src = state.photo;
-            document.getElementById('r-foto-box').classList.remove('hidden');
-        } else {
-            document.getElementById('r-foto-box').classList.add('hidden');
+        const fotoImg = document.getElementById('r-foto-img');
+        const fotoBox = document.getElementById('r-foto-box');
+        if (fotoBox) {
+            if (state.photo && fotoImg) {
+                fotoImg.src = state.photo;
+                fotoBox.classList.remove('hidden');
+            } else {
+                fotoBox.classList.add('hidden');
+            }
         }
 
         const savedNome = localStorage.getItem('videplast_auditor_nome') || 'Auditor SESMT';
         const savedRegistro = localStorage.getItem('videplast_auditor_registro') || '';
         
-        document.getElementById('r-auditor-nome-rodape').textContent = savedNome.toUpperCase();
-        document.getElementById('r-auditor-registro-rodape').textContent = savedRegistro ? savedRegistro.toUpperCase() : 'SESMT';
+        const auditorNomeEl = document.getElementById('r-auditor-nome-rodape');
+        if (auditorNomeEl) auditorNomeEl.textContent = savedNome.toUpperCase();
 
-        if (state.sigColab) {
-            document.getElementById('r-sig-img').src = state.sigColab;
-            document.getElementById('r-sig-img').classList.remove('hidden');
-        } else {
-            document.getElementById('r-sig-img').classList.add('hidden');
+        const auditorRegEl = document.getElementById('r-auditor-registro-rodape');
+        if (auditorRegEl) auditorRegEl.textContent = savedRegistro ? savedRegistro.toUpperCase() : 'SESMT';
+
+        const sigImgColab = document.getElementById('r-sig-img');
+        if (sigImgColab) {
+            if (state.sigColab) {
+                sigImgColab.src = state.sigColab;
+                sigImgColab.classList.remove('hidden');
+            } else {
+                sigImgColab.classList.add('hidden');
+            }
         }
-        if (state.sigAuditor) {
-            document.getElementById('r-sig-auditor-img').src = state.sigAuditor;
-            document.getElementById('r-sig-auditor-img').classList.remove('hidden');
-        } else {
-            document.getElementById('r-sig-auditor-img').classList.add('hidden');
+
+        const sigImgAuditor = document.getElementById('r-sig-auditor-img');
+        if (sigImgAuditor) {
+            if (state.sigAuditor) {
+                sigImgAuditor.src = state.sigAuditor;
+                sigImgAuditor.classList.remove('hidden');
+            } else {
+                sigImgAuditor.classList.add('hidden');
+            }
         }
-        const kNome = Object.keys(state.colab).find(k => normalizeStr(k).includes('nome')) || Object.keys(state.colab)[1];
-        document.getElementById('r-nome-rodape').textContent = state.colab[kNome];
+
+        const kNome = keys.find(k => normalizeStr(k).includes('nome')) || keys[1] || 'Nome';
+        const colabNome = colab[kNome] || colab['Nome'] || colab['NOME'] || 'COLABORADOR';
+        const nomeRodape = document.getElementById('r-nome-rodape');
+        if (nomeRodape) nomeRodape.textContent = colabNome;
     }
 
     function gerarPDF() {
